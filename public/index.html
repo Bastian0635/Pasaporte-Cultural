@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pasaporte Cultural - Sprint 1: Cimientos y Control de Acceso</title>
+  <meta name="description" content="Plataforma para descubrir espacios culturales, guardar lugares de interés, registrar visitas y cumplir retos de exploración." />
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Cinzel:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-background"></div>
+  
+  <header class="top-nav">
+    <div class="nav-container">
+      <div class="brand">
+        <div class="brand-icon">🏛️</div>
+        <div>
+          <span class="brand-title">Pasaporte Cultural</span>
+          <span class="brand-subtitle">Sprint 1 • Cimientos, Modelos y Control de Acceso</span>
+        </div>
+      </div>
+      <div class="nav-badges">
+        <span class="pill-badge pill-arch">Arquitectura Modular</span>
+        <span class="pill-badge pill-sqlite">SQLite Nativo (node:sqlite)</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <!-- Hero / Intro -->
+    <section class="hero-section">
+      <div class="hero-content">
+        <div class="badge-sprint">SPRINT 1 COMPLETADO</div>
+        <h1 class="hero-title">Cimientos, Persistencia y Control de Acceso</h1>
+        <p class="hero-desc">
+          Base arquitectónica con separación limpia de responsabilidades (<code class="code-hl">core</code>, <code class="code-hl">data/models</code>, <code class="code-hl">data/providers</code>, <code class="code-hl">data/repositories</code>, <code class="code-hl">data/services</code>, <code class="code-hl">modules/access</code>, <code class="code-hl">middlewares</code> y <code class="code-hl">tests</code>).
+        </p>
+      </div>
+    </section>
+
+    <!-- Panel de Autenticación y Sesión Actual -->
+    <div class="dashboard-grid">
+      <!-- Columna 1: Tarjetas de Usuarios de Prueba y Login -->
+      <section class="card glass-card">
+        <div class="card-header">
+          <div class="header-icon">🔑</div>
+          <div>
+            <h2>Acceso al Sistema</h2>
+            <p class="section-subtitle">Inicia sesión con los perfiles requeridos</p>
+          </div>
+        </div>
+
+        <div class="demo-users-container">
+          <div class="demo-card user-visitante" id="cardDemoVisitante">
+            <div class="demo-card-top">
+              <div class="user-avatar avatar-visitante">CV</div>
+              <div class="user-meta">
+                <span class="role-badge role-visitante">VISITANTE</span>
+                <strong class="user-name">Carlos Visitante</strong>
+                <span class="user-email">visitante@pasaporte.com</span>
+              </div>
+            </div>
+            <p class="demo-hint">Explora lugares, guarda favoritos y registra visitas.</p>
+            <button class="btn btn-primary btn-block" id="btnQuickLoginVisitante">
+              Entrar como Visitante
+            </button>
+          </div>
+
+          <div class="demo-card user-editor" id="cardDemoEditor">
+            <div class="demo-card-top">
+              <div class="user-avatar avatar-editor">EE</div>
+              <div class="user-meta">
+                <span class="role-badge role-editor">EDITOR</span>
+                <strong class="user-name">Elena Editora</strong>
+                <span class="user-email">editor@pasaporte.com</span>
+              </div>
+            </div>
+            <p class="demo-hint">Crea, edita y desactiva lugares; administra retos.</p>
+            <button class="btn btn-secondary btn-block" id="btnQuickLoginEditor">
+              Entrar como Editor
+            </button>
+          </div>
+        </div>
+
+        <!-- Formulario Manual de Login -->
+        <div class="manual-login-box">
+          <h3 class="box-title">O ingresa credenciales manualmente:</h3>
+          <form id="formLogin" class="form-grid">
+            <div class="input-group">
+              <label for="inputEmail">Correo electrónico:</label>
+              <input type="email" id="inputEmail" placeholder="usuario@pasaporte.com" required />
+            </div>
+            <div class="input-group">
+              <label for="inputPassword">Contraseña:</label>
+              <input type="password" id="inputPassword" placeholder="••••••••" required />
+            </div>
+            <button type="submit" class="btn btn-accent btn-block" id="btnLoginSubmit">
+              Iniciar Sesión
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Columna 2: Estado de Sesión y Verificación de Roles -->
+      <section class="card glass-card">
+        <div class="card-header">
+          <div class="header-icon">🛡️</div>
+          <div>
+            <h2>Estado de Sesión (<code class="code-hl">Sesión.usuarioActual()</code>)</h2>
+            <p class="section-subtitle">Evaluación en tiempo real de sesión activa y privilegios</p>
+          </div>
+        </div>
+
+        <!-- Estado actual de la sesión -->
+        <div class="session-display" id="sessionDisplay">
+          <div class="no-session-state" id="noSessionState">
+            <div class="state-icon">🔒</div>
+            <h3>Sin sesión iniciada</h3>
+            <p>Utiliza uno de los accesos directos de la izquierda para autenticarte.</p>
+          </div>
+
+          <div class="active-session-state hidden" id="activeSessionState">
+            <div class="active-user-badge">
+              <div class="user-avatar" id="activeAvatar">U</div>
+              <div>
+                <div class="active-user-header">
+                  <h3 id="activeUserName">Nombre de Usuario</h3>
+                  <span class="role-badge" id="activeUserRole">ROL</span>
+                </div>
+                <p id="activeUserEmail" class="active-user-email">email@pasaporte.com</p>
+              </div>
+            </div>
+
+            <div class="session-tokens-box">
+              <div class="token-row">
+                <span class="token-label">Token de Sesión:</span>
+                <code class="token-value" id="activeToken">uuid-token-string</code>
+              </div>
+              <div class="token-row">
+                <span class="token-label">Vigencia hasta:</span>
+                <span class="token-expiry" id="activeExpiry">-</span>
+              </div>
+            </div>
+
+            <div class="session-actions">
+              <button class="btn btn-outline" id="btnConsultarMe">
+                🔄 Re-consultar Sesión.usuarioActual()
+              </button>
+              <button class="btn btn-danger" id="btnLogout">
+                Cerrar Sesión (Logout)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Banco de Pruebas de Permisos y Roles (Regla 9) -->
+        <div class="role-test-box">
+          <h3 class="box-title">Verificación de Guardas y Roles en Vivo</h3>
+          <p class="box-desc">
+            Demuestra que el sistema no solo oculta opciones, sino que valida en el backend con HTTP 403 Forbidden cuando un visitante intenta acceder a operaciones de editor.
+          </p>
+          <div class="test-buttons-grid">
+            <button class="btn btn-sm btn-test" id="btnTestSesionGeneral">
+              🔍 Probar Ruta Autenticada
+            </button>
+            <button class="btn btn-sm btn-test-editor" id="btnTestRutaEditor">
+              👑 Probar Ruta Solo Editor (Admin)
+            </button>
+          </div>
+
+          <!-- Consola de Resultados -->
+          <div class="console-box" id="testConsole">
+            <div class="console-header">
+              <span>Respuesta del Servidor</span>
+              <span class="console-status" id="consoleStatus">En espera...</span>
+            </div>
+            <pre class="console-body" id="consoleBody">Haz clic en una de las pruebas de arriba para verificar la respuesta HTTP y las guardas de seguridad.</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Inspector de Persistencia y Semilla de Datos -->
+    <section class="card glass-card data-inspector-section">
+      <div class="card-header">
+        <div class="header-icon">📦</div>
+        <div>
+          <h2>Persistencia Base y Semilla Inicial de Datos</h2>
+          <p class="section-subtitle">12 lugares (3 categorías), 3 retos y 2 usuarios cargados con garantía de no sobrescritura</p>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-pill">
+          <span class="stat-num" id="statLugares">12</span>
+          <span class="stat-text">Lugares Culturales (Museos, Galerías, Centros)</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-num" id="statRetos">3</span>
+          <span class="stat-text">Retos de Exploración (Activos e Históricos)</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-num" id="statUsuarios">2</span>
+          <span class="stat-text">Usuarios de Prueba (Visitante y Editor)</span>
+        </div>
+      </div>
+
+      <!-- Pestañas de Lugares Demo -->
+      <div class="places-demo-preview">
+        <div class="places-header-row">
+          <h3>Lugares Culturales en Base de Datos</h3>
+          <div class="category-filters" id="categoryFilters">
+            <button class="filter-btn active" data-cat="todos">Todos (12)</button>
+            <button class="filter-btn" data-cat="museo">Museos (4)</button>
+            <button class="filter-btn" data-cat="galería">Galerías (4)</button>
+            <button class="filter-btn" data-cat="centro cultural">Centros Culturales (4)</button>
+          </div>
+        </div>
+
+        <div class="places-grid" id="placesGrid">
+          <!-- Creados dinámicamente por app.js -->
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <p>Pasaporte Cultural © 2026 • Sprint 1: Cimientos, Modelos y Control de Acceso.</p>
+      <p class="footer-sub">Cumpliendo estrictamente todas las reglas de negocio y arquitectura de software.</p>
+    </div>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>

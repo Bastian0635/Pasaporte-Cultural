@@ -1,0 +1,25 @@
+{
+  "name": "pasaporte-cultural",
+  "version": "1.0.0",
+  "description": "Pasaporte Cultural - Plataforma para descubrir espacios culturales, registrar visitas y cumplir retos",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test tests/**/*.test.js",
+    "seed": "node scripts/seed.js"
+  },
+  "keywords": [
+    "pasaporte-cultural",
+    "cultura",
+    "museos",
+    "retos"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2"
+  }
+}
