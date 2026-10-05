@@ -1,16 +1,16 @@
 /**
  * data/repositories/LugarRepository.js
  * 
- * Acceso y persistencia para la entidad Lugar.
+ * Acceso y persistencia para la entidad Lugar con PostgreSQL.
  */
 
 import { randomUUID } from 'node:crypto';
 import { Lugar } from '../models/Lugar.js';
-import { getDatabaseProvider } from '../providers/sqliteProvider.js';
+import { getDatabaseProvider } from '../providers/postgresProvider.js';
 
 export class LugarRepository {
   /**
-   * @param {import('../providers/sqliteProvider.js').SqliteProvider} [provider]
+   * @param {import('../providers/postgresProvider.js').PostgresProvider} [provider]
    */
   constructor(provider = null) {
     this.provider = provider || getDatabaseProvider();
@@ -24,9 +24,9 @@ export class LugarRepository {
    * @param {string} [filtros.categoria]
    * @param {string} [filtros.municipio]
    * @param {boolean} [filtros.soloActivos=true]
-   * @returns {Lugar[]}
+   * @returns {Promise<Lugar[]>}
    */
-  buscar({ texto = '', categoria = '', municipio = '', soloActivos = true } = {}) {
+  async buscar({ texto = '', categoria = '', municipio = '', soloActivos = true } = {}) {
     let sql = 'SELECT * FROM lugares WHERE 1=1';
     const params = [];
 
@@ -35,129 +35,135 @@ export class LugarRepository {
     }
 
     if (categoria && categoria.trim() !== '') {
-      sql += ' AND lower(categoria) = lower(?)';
       params.push(categoria.trim());
+      sql += ` AND lower(categoria) = lower($${params.length})`;
     }
 
     if (municipio && municipio.trim() !== '') {
-      sql += ' AND lower(municipio) LIKE lower(?)';
       params.push(`%${municipio.trim()}%`);
+      sql += ` AND lower(municipio) LIKE lower($${params.length})`;
     }
 
     if (texto && texto.trim() !== '') {
-      sql += ' AND (lower(nombre) LIKE lower(?) OR lower(descripcion) LIKE lower(?))';
       const pattern = `%${texto.trim()}%`;
-      params.push(pattern, pattern);
+      params.push(pattern);
+      const idx1 = params.length;
+      params.push(pattern);
+      const idx2 = params.length;
+      sql += ` AND (lower(nombre) LIKE lower($${idx1}) OR lower(descripcion) LIKE lower($${idx2}))`;
     }
 
     sql += ' ORDER BY nombre ASC';
 
-    const rows = this.provider.all(sql, params);
+    const rows = await this.provider.all(sql, params);
     return rows.map((r) => Lugar.fromDatabase(r));
   }
 
   /**
    * Obtiene un lugar por su identificador.
    * @param {string} id
-   * @returns {Lugar|null}
+   * @returns {Promise<Lugar|null>}
    */
-  obtenerPorId(id) {
+  async obtenerPorId(id) {
     if (!id) return null;
-    const row = this.provider.get('SELECT * FROM lugares WHERE id = ?', [String(id)]);
+    const row = await this.provider.get('SELECT * FROM lugares WHERE id = $1', [String(id)]);
     return row ? Lugar.fromDatabase(row) : null;
   }
 
   /**
    * Obtiene un lugar por su código único de registro.
    * @param {string} codigo
-   * @returns {Lugar|null}
+   * @returns {Promise<Lugar|null>}
    */
-  obtenerPorCodigo(codigo) {
+  async obtenerPorCodigo(codigo) {
     if (!codigo) return null;
-    const row = this.provider.get(
-      'SELECT * FROM lugares WHERE upper(codigo_registro) = upper(?)',
+    const row = await this.provider.get(
+      'SELECT * FROM lugares WHERE upper(codigo_registro) = upper($1)',
       [String(codigo).trim()]
     );
     return row ? Lugar.fromDatabase(row) : null;
   }
 
   /**
-   * Guarda o actualiza un lugar.
+   * Guarda o actualiza un lugar de forma atómica e idempotente en PostgreSQL.
    * @param {Lugar} lugar
-   * @returns {Lugar}
+   * @returns {Promise<Lugar>}
    */
-  guardar(lugar) {
+  async guardar(lugar) {
     const id = lugar.id || randomUUID();
     const createdAt = lugar.createdAt || new Date().toISOString();
     const activoInt = lugar.activo ? 1 : 0;
 
-    this.provider.run(
-      `INSERT INTO lugares (
+    const sql = `
+      INSERT INTO lugares (
         id, nombre, categoria, municipio, direccion, descripcion, horario, imagen, codigo_registro, activo, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        nombre = excluded.nombre,
-        categoria = excluded.categoria,
-        municipio = excluded.municipio,
-        direccion = excluded.direccion,
-        descripcion = excluded.descripcion,
-        horario = excluded.horario,
-        imagen = excluded.imagen,
-        codigo_registro = excluded.codigo_registro,
-        activo = excluded.activo`,
-      [
-        id,
-        lugar.nombre,
-        lugar.categoria,
-        lugar.municipio,
-        lugar.direccion,
-        lugar.descripcion,
-        lugar.horario,
-        lugar.imagen,
-        lugar.codigoRegistro,
-        activoInt,
-        createdAt
-      ]
-    );
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (id) DO UPDATE SET
+        nombre = EXCLUDED.nombre,
+        categoria = EXCLUDED.categoria,
+        municipio = EXCLUDED.municipio,
+        direccion = EXCLUDED.direccion,
+        descripcion = EXCLUDED.descripcion,
+        horario = EXCLUDED.horario,
+        imagen = EXCLUDED.imagen,
+        codigo_registro = EXCLUDED.codigo_registro,
+        activo = EXCLUDED.activo
+      RETURNING *;
+    `;
 
-    return this.obtenerPorId(id);
+    const params = [
+      id,
+      lugar.nombre,
+      lugar.categoria,
+      lugar.municipio,
+      lugar.direccion,
+      lugar.descripcion,
+      lugar.horario,
+      lugar.imagen,
+      lugar.codigoRegistro,
+      activoInt,
+      createdAt
+    ];
+
+    const row = await this.provider.get(sql, params);
+    return row ? Lugar.fromDatabase(row) : (await this.obtenerPorId(id)) || lugar;
   }
 
   /**
    * Desactiva un lugar por ID (activo = 0).
    * @param {string} id
-   * @returns {boolean}
+   * @returns {Promise<boolean>}
    */
-  desactivar(id) {
-    const res = this.provider.run('UPDATE lugares SET activo = 0 WHERE id = ?', [String(id)]);
-    return res.changes > 0;
+  async desactivar(id) {
+    const res = await this.provider.run('UPDATE lugares SET activo = 0 WHERE id = $1', [String(id)]);
+    return res && (res.changes > 0 || res.rowCount > 0);
   }
 
   /**
    * Activa un lugar por ID (activo = 1).
    * @param {string} id
-   * @returns {boolean}
+   * @returns {Promise<boolean>}
    */
-  activar(id) {
-    const res = this.provider.run('UPDATE lugares SET activo = 1 WHERE id = ?', [String(id)]);
-    return res.changes > 0;
+  async activar(id) {
+    const res = await this.provider.run('UPDATE lugares SET activo = 1 WHERE id = $1', [String(id)]);
+    return res && (res.changes > 0 || res.rowCount > 0);
   }
 
   /**
    * Cuenta total de lugares registrados.
-   * @returns {number}
+   * @returns {Promise<number>}
    */
-  contar() {
-    const row = this.provider.get('SELECT COUNT(*) as total FROM lugares');
-    return row ? row.total : 0;
+  async contar() {
+    const row = await this.provider.get('SELECT COUNT(*) as total FROM lugares');
+    return row ? parseInt(row.total, 10) : 0;
   }
 
   /**
    * Lista todos los lugares (activos e inactivos, útil para administración).
-   * @returns {Lugar[]}
+   * @returns {Promise<Lugar[]>}
    */
-  listarTodos() {
-    const rows = this.provider.all('SELECT * FROM lugares ORDER BY nombre ASC');
+  async listarTodos() {
+    const rows = await this.provider.all('SELECT * FROM lugares ORDER BY nombre ASC');
     return rows.map((r) => Lugar.fromDatabase(r));
   }
 }

@@ -1,1 +1,2 @@
-export { SqliteProvider, getDatabaseProvider, resetDefaultProvider } from './sqliteProvider.js';
+export { PostgresProvider, getDatabaseProvider, resetDefaultProvider } from './postgresProvider.js';
+export { SqliteProvider } from './sqliteProvider.js';

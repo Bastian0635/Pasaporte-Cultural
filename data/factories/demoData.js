@@ -205,8 +205,8 @@ export const RETOS_DEMO = [
     descripcion: 'Reto finalizado correspondiente a la temporada pasada para verificar el historial de retos.',
     categoria: CATEGORIAS.CENTRO_CULTURAL,
     meta: 3,
-    fechaInicio: '2026-06-01',
-    fechaFin: '2026-07-31',
-    activo: false
+    fechaInicio: '2026-01-01',
+    fechaFin: '2026-12-31',
+    activo: true
   }
 ];

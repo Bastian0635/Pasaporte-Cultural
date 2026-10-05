@@ -1,6 +1,6 @@
-import { test, describe, beforeEach } from 'node:test';
+import { test, describe, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { SqliteProvider } from '../../data/providers/sqliteProvider.js';
+import { PostgresProvider } from '../../data/providers/postgresProvider.js';
 import { UsuarioRepository } from '../../data/repositories/UsuarioRepository.js';
 import { SesionRepository } from '../../data/repositories/SesionRepository.js';
 import { SesionService } from '../../data/services/sesionService.js';
@@ -8,7 +8,7 @@ import { SeedFactory } from '../../data/factories/seedFactory.js';
 import { requerirSesion, requerirEditor, soloInvitado } from '../../middlewares/authMiddleware.js';
 import { AuthenticationError, ForbiddenError } from '../../core/errors.js';
 
-describe('Middlewares: Verificación de Sesión y Control de Roles', () => {
+describe('Middlewares: Verificación de Sesión y Control de Roles (PostgreSQL)', () => {
   let provider;
   let usuarioRepo;
   let sesionRepo;
@@ -16,17 +16,30 @@ describe('Middlewares: Verificación de Sesión y Control de Roles', () => {
   let tokenVisitante;
   let tokenEditor;
 
-  beforeEach(() => {
-    provider = new SqliteProvider(':memory:');
+  beforeEach(async () => {
+    provider = new PostgresProvider();
+    await provider.inicializarTablas();
+
+    // IF EXISTS evita excepciones si alguna tabla condicional aún no fue creada
+    await provider.exec(
+      'TRUNCATE TABLE sesiones, favoritos, visitas, visits, retos, lugares, usuarios CASCADE;'
+    );
+
     usuarioRepo = new UsuarioRepository(provider);
     sesionRepo = new SesionRepository(provider);
     sesionService = new SesionService({ usuarioRepo, sesionRepo });
 
-    const factory = new SeedFactory({ provider });
-    factory.poblarSiEsNecesario();
+    const factory = new SeedFactory({ provider, usuarioRepo });
+    await factory.poblarSiEsNecesario();
 
-    tokenVisitante = sesionService.iniciarSesion('visitante@pasaporte.com', 'Visitante123!').token;
-    tokenEditor = sesionService.iniciarSesion('editor@pasaporte.com', 'Editor123!').token;
+    tokenVisitante = (await sesionService.iniciarSesion('visitante@pasaporte.com', 'Visitante123!')).token;
+    tokenEditor = (await sesionService.iniciarSesion('editor@pasaporte.com', 'Editor123!')).token;
+  });
+
+  after(async () => {
+    if (provider) {
+      await provider.close();
+    }
   });
 
   // Helper para simular req/res de Express
@@ -62,61 +75,74 @@ describe('Middlewares: Verificación de Sesión y Control de Roles', () => {
     return { req, res, getStatus: () => statusCode, getJson: () => jsonBody };
   }
 
-  test('requerirSesion bloquea con 401 si no hay token de autenticación', (t, done) => {
+  test('requerirSesion bloquea con 401 si no hay token de autenticación', async () => {
     const { req, res } = crearMockContext(null);
 
-    requerirSesion(req, res, (err) => {
-      assert.ok(err instanceof AuthenticationError);
-      assert.equal(err.statusCode, 401);
-      done();
+    let capturedErr = null;
+    await requerirSesion(req, res, (err) => {
+      capturedErr = err;
     });
+
+    assert.ok(capturedErr instanceof AuthenticationError);
+    assert.equal(capturedErr.statusCode, 401);
   });
 
-  test('requerirSesion permite el paso si el token es válido', (t, done) => {
+  test('requerirSesion permite el paso si el token es válido', async () => {
     const { req, res } = crearMockContext(tokenVisitante);
 
-    requerirSesion(req, res, (err) => {
+    let calledNext = false;
+    await requerirSesion(req, res, (err) => {
       assert.ifError(err);
-      assert.ok(req.usuario);
-      assert.equal(req.usuario.email, 'visitante@pasaporte.com');
-      done();
+      calledNext = true;
     });
+
+    assert.ok(calledNext);
+    assert.ok(req.usuario);
+    assert.equal(req.usuario.email, 'visitante@pasaporte.com');
   });
 
-  test('Regla 9: requerirEditor deniega acceso a visitante con 403 ForbiddenError', (t, done) => {
+  test('Regla 9: requerirEditor deniega acceso a visitante con 403 ForbiddenError', async () => {
     const { req, res } = crearMockContext(tokenVisitante);
 
-    requerirEditor(req, res, (err) => {
-      assert.ok(err instanceof ForbiddenError, 'Debe ser ForbiddenError');
-      assert.equal(err.statusCode, 403, 'Debe devolver código HTTP 403');
-      done();
+    let capturedErr = null;
+    await requerirEditor(req, res, (err) => {
+      capturedErr = err;
     });
+
+    assert.ok(capturedErr instanceof ForbiddenError, 'Debe ser ForbiddenError');
+    assert.equal(capturedErr.statusCode, 403, 'Debe devolver código HTTP 403');
   });
 
-  test('requerirEditor autoriza exitosamente a usuario con rol editor', (t, done) => {
+  test('requerirEditor autoriza exitosamente a usuario con rol editor', async () => {
     const { req, res } = crearMockContext(tokenEditor);
 
-    requerirEditor(req, res, (err) => {
+    let calledNext = false;
+    await requerirEditor(req, res, (err) => {
       assert.ifError(err);
-      assert.ok(req.usuario);
-      assert.equal(req.usuario.esEditor(), true);
-      done();
+      calledNext = true;
     });
+
+    assert.ok(calledNext);
+    assert.ok(req.usuario);
+    assert.equal(req.usuario.esEditor(), true);
   });
 
-  test('soloInvitado permite continuar si no hay sesión', (t, done) => {
+  test('soloInvitado permite continuar si no hay sesión', async () => {
     const { req, res } = crearMockContext(null);
 
-    soloInvitado(req, res, (err) => {
+    let calledNext = false;
+    await soloInvitado(req, res, (err) => {
       assert.ifError(err);
-      done();
+      calledNext = true;
     });
+
+    assert.ok(calledNext);
   });
 
-  test('soloInvitado responde con estado y redirección si ya hay sesión activa', () => {
+  test('soloInvitado responde con estado y redirección si ya hay sesión activa', async () => {
     const { req, res, getStatus, getJson } = crearMockContext(tokenVisitante);
 
-    soloInvitado(req, res, () => {
+    await soloInvitado(req, res, () => {
       assert.fail('No debería llamar a next si ya hay sesión');
     });
 

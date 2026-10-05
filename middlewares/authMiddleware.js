@@ -18,18 +18,19 @@ import { getSesionService } from '../data/services/sesionService.js';
  * @returns {string|null}
  */
 export function extraerToken(req) {
-  // 1. Cookies
   if (req.cookies && req.cookies[APP_CONFIG.SESSION_COOKIE_NAME]) {
     return req.cookies[APP_CONFIG.SESSION_COOKIE_NAME];
   }
 
-  // 2. Encabezado Authorization: Bearer <token>
+  if (req.cookies && req.cookies.pasaporte_session) {
+    return req.cookies.pasaporte_session;
+  }
+
   const authHeader = req.headers['authorization'] || req.headers['Authorization'];
   if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
     return authHeader.substring(7).trim();
   }
 
-  // 3. Encabezado personalizado x-session-token
   const customHeader = req.headers['x-session-token'];
   if (customHeader && typeof customHeader === 'string') {
     return customHeader.trim();
@@ -40,15 +41,15 @@ export function extraerToken(req) {
 
 /**
  * Middleware que identifica al usuario actual a partir del token si existe,
- * adjuntándolo a req.usuario y req.token sin bloquear la petición si no existe.
+ * adjuntándolo a req.usuario y req.token.
  */
-export function identificarUsuario(req, res, next) {
+export async function identificarUsuario(req, res, next) {
   try {
-    const sesionService = req.app.get('sesionService') || getSesionService();
+    const sesionService = req.app?.get('sesionService') || getSesionService();
     const token = extraerToken(req);
 
     if (token) {
-      const usuario = sesionService.usuarioActual(token);
+      const usuario = await sesionService.usuarioActual(token);
       if (usuario) {
         req.token = token;
         req.usuario = usuario;
@@ -60,78 +61,86 @@ export function identificarUsuario(req, res, next) {
       req.token = null;
       req.usuario = null;
     }
-    next();
+    if (typeof next === 'function') next();
   } catch (err) {
-    next(err);
+    if (typeof next === 'function') next(err);
   }
 }
 
 /**
  * Middleware que exige una sesión de usuario válida.
- * Si no está autenticado, responde 401 AuthenticationError.
  */
-export function requerirSesion(req, res, next) {
-  identificarUsuario(req, res, () => {
+export async function requerirSesion(req, res, next) {
+  try {
+    await identificarUsuario(req, res);
     if (!req.usuario) {
-      return next(new AuthenticationError('Acceso denegado: se requiere una sesión activa.'));
+      const err = new AuthenticationError('Acceso denegado: se requiere una sesión activa.');
+      if (typeof next === 'function') return next(err);
+      throw err;
     }
-    next();
-  });
+    if (typeof next === 'function') next();
+  } catch (err) {
+    if (typeof next === 'function') next(err);
+  }
 }
 
 /**
- * Generador de middleware para exigir un rol específico ('editor' o 'visitante').
- * Regla 9: Se valida el rol tanto al entrar a las funciones de administración
- * como al ejecutar la operación de escritura. Ocultar una opción de la interfaz, por sí solo, no cumple esta regla.
- * @param {string|string[]} rolesPermitidos
+ * Generador de middleware para exigir un rol específico.
  */
 export function requerirRol(rolesPermitidos) {
   const permitidos = Array.isArray(rolesPermitidos) ? rolesPermitidos : [rolesPermitidos];
 
-  return (req, res, next) => {
-    requerirSesion(req, res, () => {
-      if (!permitidos.includes(req.usuario.rol)) {
-        return next(
-          new ForbiddenError(
-            `Acceso denegado: la acción requiere rol (${permitidos.join(' o ')}). Su rol actual es '${req.usuario.rol}'.`
-          )
+  return async (req, res, next) => {
+    try {
+      await requerirSesion(req, res);
+      if (!req.usuario) return;
+
+      const rolUsuario = req.usuario.rol;
+      if (!permitidos.includes(rolUsuario)) {
+        const err = new ForbiddenError(
+          `Acceso denegado: la acción requiere rol (${permitidos.join(' o ')}). Su rol actual es '${rolUsuario}'.`
         );
+        if (typeof next === 'function') return next(err);
+        throw err;
       }
-      next();
-    });
+      if (typeof next === 'function') next();
+    } catch (err) {
+      if (typeof next === 'function') next(err);
+    }
   };
 }
 
-/**
- * Acceso exclusivo para rol Editor.
- */
 export const requerirEditor = requerirRol(ROLES.EDITOR);
-
-/**
- * Acceso exclusivo para rol Visitante.
- */
 export const requerirVisitante = requerirRol(ROLES.VISITANTE);
 
 /**
- * Guarda para páginas o endpoints de acceso de invitados (login / registro).
- * Regla de acceso: "Entrada al sistema: Sin sesión. Si ya hay sesión, llevar al resumen o devolver el estado de sesión."
+ * Guarda para acceso de invitados.
  */
-export function soloInvitado(req, res, next) {
-  identificarUsuario(req, res, () => {
+export async function soloInvitado(req, res, next) {
+  try {
+    await identificarUsuario(req, res);
+
     if (req.usuario) {
       const acceptsHtml = typeof req.accepts === 'function' ? req.accepts('html') : false;
       const isApi = req.path && req.path.startsWith('/api/');
+
       if (acceptsHtml && !req.xhr && !isApi) {
         return res.redirect('/home');
       }
+
+      const usuarioJSON = typeof req.usuario.toJSON === 'function' ? req.usuario.toJSON() : req.usuario;
+
       return res.status(200).json({
         success: true,
         message: 'Usuario ya tiene una sesión iniciada.',
         autenticado: true,
-        usuario: req.usuario.toJSON(),
+        usuario: usuarioJSON,
         redirect: '/home'
       });
     }
-    next();
-  });
+
+    if (typeof next === 'function') next();
+  } catch (err) {
+    if (typeof next === 'function') next(err);
+  }
 }

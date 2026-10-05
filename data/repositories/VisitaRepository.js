@@ -1,17 +1,17 @@
 /**
  * data/repositories/VisitaRepository.js
  * 
- * Acceso y persistencia para la entidad Visita.
+ * Acceso y persistencia para la entidad Visita con PostgreSQL.
  */
 
 import { randomUUID } from 'node:crypto';
 import { Visita } from '../models/Visita.js';
-import { getDatabaseProvider } from '../providers/sqliteProvider.js';
+import { getDatabaseProvider } from '../providers/postgresProvider.js';
 import { obtenerFechaString } from '../../core/dateUtils.js';
 
 export class VisitaRepository {
   /**
-   * @param {import('../providers/sqliteProvider.js').SqliteProvider} [provider]
+   * @param {import('../providers/postgresProvider.js').PostgresProvider} [provider]
    */
   constructor(provider = null) {
     this.provider = provider || getDatabaseProvider();
@@ -23,14 +23,14 @@ export class VisitaRepository {
    * @param {string} usuarioId
    * @param {string} lugarId
    * @param {string} dia - Formato YYYY-MM-DD
-   * @returns {Visita|null}
+   * @returns {Promise<Visita|null>}
    */
-  buscarPorUsuarioLugarYDia(usuarioId, lugarId, dia) {
-    const row = this.provider.get(
+  async buscarPorUsuarioLugarYDia(usuarioId, lugarId, dia) {
+    const row = await this.provider.get(
       `SELECT v.*, l.nombre as lugar_nombre, l.categoria as lugar_categoria, l.municipio as lugar_municipio, l.imagen as lugar_imagen
        FROM visitas v
        JOIN lugares l ON v.lugar_id = l.id
-       WHERE v.usuario_id = ? AND v.lugar_id = ? AND v.dia = ?`,
+       WHERE v.usuario_id = $1 AND v.lugar_id = $2 AND v.dia = $3`,
       [String(usuarioId), String(lugarId), String(dia)]
     );
     return row ? Visita.fromDatabase(row) : null;
@@ -39,34 +39,47 @@ export class VisitaRepository {
   /**
    * Guarda una nueva visita.
    * @param {Visita} visita
-   * @returns {Visita}
+   * @returns {Promise<Visita>}
    */
-  guardar(visita) {
+  async guardar(visita) {
     const id = visita.id || randomUUID();
     const dia = visita.obtenerDia();
+    const fechaHora = visita.fechaHora || new Date().toISOString();
     const createdAt = new Date().toISOString();
 
-    this.provider.run(
+    await this.provider.run(
       `INSERT INTO visitas (id, usuario_id, lugar_id, fecha_hora, dia, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, visita.usuarioId, visita.lugarId, visita.fechaHora, dia, createdAt]
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, visita.usuarioId, visita.lugarId, fechaHora, dia, createdAt]
     );
 
-    return this.obtenerPorId(id);
+    // Mantener sincronizada la tabla visits para asegurar compatibilidad total con el esquema requerido
+    try {
+      await this.provider.run(
+        `INSERT INTO visits (id, user_id, place_id, timestamp, created_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT DO NOTHING`,
+        [id, visita.usuarioId, visita.lugarId, fechaHora, createdAt]
+      );
+    } catch {
+      // Ignorar si la tabla visits no está presente en algún entorno
+    }
+
+    return await this.obtenerPorId(id);
   }
 
   /**
    * Obtiene una visita por ID con detalles del lugar.
    * @param {string} id
-   * @returns {Visita|null}
+   * @returns {Promise<Visita|null>}
    */
-  obtenerPorId(id) {
+  async obtenerPorId(id) {
     if (!id) return null;
-    const row = this.provider.get(
+    const row = await this.provider.get(
       `SELECT v.*, l.nombre as lugar_nombre, l.categoria as lugar_categoria, l.municipio as lugar_municipio, l.imagen as lugar_imagen
        FROM visitas v
        JOIN lugares l ON v.lugar_id = l.id
-       WHERE v.id = ?`,
+       WHERE v.id = $1`,
       [String(id)]
     );
     return row ? Visita.fromDatabase(row) : null;
@@ -76,25 +89,25 @@ export class VisitaRepository {
    * Lista las visitas propias en orden de fecha descendente, con filtro opcional por mes (YYYY-MM).
    * @param {string} usuarioId
    * @param {string} [mes] - Filtro opcional en formato YYYY-MM
-   * @returns {Visita[]}
+   * @returns {Promise<Visita[]>}
    */
-  listarPorUsuario(usuarioId, mes = null) {
+  async listarPorUsuario(usuarioId, mes = null) {
     let sql = `
       SELECT v.*, l.nombre as lugar_nombre, l.categoria as lugar_categoria, l.municipio as lugar_municipio, l.imagen as lugar_imagen
       FROM visitas v
       JOIN lugares l ON v.lugar_id = l.id
-      WHERE v.usuario_id = ?
+      WHERE v.usuario_id = $1
     `;
     const params = [String(usuarioId)];
 
     if (mes && mes.trim() !== '') {
-      sql += ' AND v.dia LIKE ?';
       params.push(`${mes.trim()}%`);
+      sql += ` AND CAST(v.dia AS TEXT) LIKE $${params.length}`;
     }
 
     sql += ' ORDER BY v.fecha_hora DESC, v.created_at DESC';
 
-    const rows = this.provider.all(sql, params);
+    const rows = await this.provider.all(sql, params);
     return rows.map((r) => Visita.fromDatabase(r));
   }
 
@@ -106,55 +119,55 @@ export class VisitaRepository {
    * @param {string} [filtros.categoria]
    * @param {string} [filtros.fechaInicio]
    * @param {string} [filtros.fechaFin]
-   * @returns {string[]} Lista de IDs únicos de lugares visitados
+   * @returns {Promise<string[]>} Lista de IDs únicos de lugares visitados
    */
-  obtenerLugaresDistintosVisitados(usuarioId, { categoria = null, fechaInicio = null, fechaFin = null } = {}) {
+  async obtenerLugaresDistintosVisitados(usuarioId, { categoria = null, fechaInicio = null, fechaFin = null } = {}) {
     let sql = `
       SELECT DISTINCT v.lugar_id
       FROM visitas v
       JOIN lugares l ON v.lugar_id = l.id
-      WHERE v.usuario_id = ?
+      WHERE v.usuario_id = $1
     `;
     const params = [String(usuarioId)];
 
     if (categoria) {
-      sql += ' AND lower(l.categoria) = lower(?)';
       params.push(categoria);
+      sql += ` AND lower(l.categoria) = lower($${params.length})`;
     }
 
     if (fechaInicio) {
-      sql += ' AND v.dia >= ?';
       params.push(obtenerFechaString(fechaInicio));
+      sql += ` AND v.dia >= $${params.length}`;
     }
 
     if (fechaFin) {
-      sql += ' AND v.dia <= ?';
       params.push(obtenerFechaString(fechaFin));
+      sql += ` AND v.dia <= $${params.length}`;
     }
 
-    const rows = this.provider.all(sql, params);
+    const rows = await this.provider.all(sql, params);
     return rows.map((r) => String(r.lugar_id));
   }
 
   /**
    * Cuenta cantidad de visitas totales de un usuario.
    * @param {string} usuarioId
-   * @returns {number}
+   * @returns {Promise<number>}
    */
-  contarPorUsuario(usuarioId) {
-    const row = this.provider.get('SELECT COUNT(*) as total FROM visitas WHERE usuario_id = ?', [String(usuarioId)]);
-    return row ? row.total : 0;
+  async contarPorUsuario(usuarioId) {
+    const row = await this.provider.get('SELECT COUNT(*) as total FROM visitas WHERE usuario_id = $1', [String(usuarioId)]);
+    return row ? parseInt(row.total, 10) : 0;
   }
 
   /**
    * Cuenta cantidad de lugares distintos visitados por un usuario.
    * @param {string} usuarioId
-   * @returns {number}
+   * @returns {Promise<number>}
    */
-  contarLugaresDistintos(usuarioId) {
-    const row = this.provider.get('SELECT COUNT(DISTINCT lugar_id) as total FROM visitas WHERE usuario_id = ?', [
+  async contarLugaresDistintos(usuarioId) {
+    const row = await this.provider.get('SELECT COUNT(DISTINCT lugar_id) as total FROM visitas WHERE usuario_id = $1', [
       String(usuarioId)
     ]);
-    return row ? row.total : 0;
+    return row ? parseInt(row.total, 10) : 0;
   }
 }

@@ -1,16 +1,16 @@
 /**
  * data/repositories/FavoritoRepository.js
  * 
- * Acceso y persistencia para la entidad Favorito.
+ * Acceso y persistencia para la entidad Favorito con PostgreSQL.
  */
 
 import { randomUUID } from 'node:crypto';
 import { Favorito } from '../models/Favorito.js';
-import { getDatabaseProvider } from '../providers/sqliteProvider.js';
+import { getDatabaseProvider } from '../providers/postgresProvider.js';
 
 export class FavoritoRepository {
   /**
-   * @param {import('../providers/sqliteProvider.js').SqliteProvider} [provider]
+   * @param {import('../providers/postgresProvider.js').PostgresProvider} [provider]
    */
   constructor(provider = null) {
     this.provider = provider || getDatabaseProvider();
@@ -20,11 +20,11 @@ export class FavoritoRepository {
    * Verifica si existe la relación favorito entre usuario y lugar.
    * @param {string} usuarioId
    * @param {string} lugarId
-   * @returns {boolean}
+   * @returns {Promise<boolean>}
    */
-  existe(usuarioId, lugarId) {
-    const row = this.provider.get(
-      'SELECT id FROM favoritos WHERE usuario_id = ? AND lugar_id = ?',
+  async existe(usuarioId, lugarId) {
+    const row = await this.provider.get(
+      'SELECT id FROM favoritos WHERE usuario_id = $1 AND lugar_id = $2',
       [String(usuarioId), String(lugarId)]
     );
     return Boolean(row);
@@ -36,23 +36,24 @@ export class FavoritoRepository {
    * @param {string} usuarioId
    * @param {string} lugarId
    * @param {boolean} siNo - true para agregar/mantener, false para quitar
-   * @returns {boolean} Estado final (true = es favorito, false = no es favorito)
+   * @returns {Promise<boolean>} Estado final (true = es favorito, false = no es favorito)
    */
-  establecer(usuarioId, lugarId, siNo) {
+  async establecer(usuarioId, lugarId, siNo) {
     const uId = String(usuarioId);
     const lId = String(lugarId);
 
     if (siNo) {
-      // Usar INSERT OR IGNORE para no crear duplicados
-      this.provider.run(
-        `INSERT OR IGNORE INTO favoritos (id, usuario_id, lugar_id, created_at)
-         VALUES (?, ?, ?, ?)`,
+      // Usar ON CONFLICT DO NOTHING en PostgreSQL para evitar duplicados
+      await this.provider.run(
+        `INSERT INTO favoritos (id, usuario_id, lugar_id, created_at)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (usuario_id, lugar_id) DO NOTHING`,
         [randomUUID(), uId, lId, new Date().toISOString()]
       );
       return true;
     } else {
-      this.provider.run(
-        'DELETE FROM favoritos WHERE usuario_id = ? AND lugar_id = ?',
+      await this.provider.run(
+        'DELETE FROM favoritos WHERE usuario_id = $1 AND lugar_id = $2',
         [uId, lId]
       );
       return false;
@@ -63,15 +64,15 @@ export class FavoritoRepository {
    * Lista los lugares marcados como favoritos por un usuario.
    * Devuelve los favoritos con la información completa del lugar.
    * @param {string} usuarioId
-   * @returns {Favorito[]}
+   * @returns {Promise<Favorito[]>}
    */
-  listarPorUsuario(usuarioId) {
-    const rows = this.provider.all(
+  async listarPorUsuario(usuarioId) {
+    const rows = await this.provider.all(
       `SELECT f.*, l.nombre as lugar_nombre, l.categoria as lugar_categoria,
               l.municipio as lugar_municipio, l.imagen as lugar_imagen, l.activo as lugar_activo
        FROM favoritos f
        JOIN lugares l ON f.lugar_id = l.id
-       WHERE f.usuario_id = ?
+       WHERE f.usuario_id = $1
        ORDER BY f.created_at DESC`,
       [String(usuarioId)]
     );
@@ -81,13 +82,13 @@ export class FavoritoRepository {
   /**
    * Cuenta cantidad de favoritos de un usuario.
    * @param {string} usuarioId
-   * @returns {number}
+   * @returns {Promise<number>}
    */
-  contarPorUsuario(usuarioId) {
-    const row = this.provider.get(
-      'SELECT COUNT(*) as total FROM favoritos WHERE usuario_id = ?',
+  async contarPorUsuario(usuarioId) {
+    const row = await this.provider.get(
+      'SELECT COUNT(*) as total FROM favoritos WHERE usuario_id = $1',
       [String(usuarioId)]
     );
-    return row ? row.total : 0;
+    return row ? parseInt(row.total, 10) : 0;
   }
 }

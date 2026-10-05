@@ -1,16 +1,16 @@
 /**
  * data/repositories/RetoRepository.js
  * 
- * Acceso y persistencia para la entidad Reto.
+ * Acceso y persistencia para la entidad Reto con PostgreSQL.
  */
 
 import { randomUUID } from 'node:crypto';
 import { Reto } from '../models/Reto.js';
-import { getDatabaseProvider } from '../providers/sqliteProvider.js';
+import { getDatabaseProvider } from '../providers/postgresProvider.js';
 
 export class RetoRepository {
   /**
-   * @param {import('../providers/sqliteProvider.js').SqliteProvider} [provider]
+   * @param {import('../providers/postgresProvider.js').PostgresProvider} [provider]
    */
   constructor(provider = null) {
     this.provider = provider || getDatabaseProvider();
@@ -19,29 +19,29 @@ export class RetoRepository {
   /**
    * Obtiene un reto por su ID.
    * @param {string} id
-   * @returns {Reto|null}
+   * @returns {Promise<Reto|null>}
    */
-  obtenerPorId(id) {
+  async obtenerPorId(id) {
     if (!id) return null;
-    const row = this.provider.get('SELECT * FROM retos WHERE id = ?', [String(id)]);
+    const row = await this.provider.get('SELECT * FROM retos WHERE id = $1', [String(id)]);
     return row ? Reto.fromDatabase(row) : null;
   }
 
   /**
    * Lista todos los retos.
-   * @returns {Reto[]}
+   * @returns {Promise<Reto[]>}
    */
-  listarTodos() {
-    const rows = this.provider.all('SELECT * FROM retos ORDER BY fecha_inicio DESC, titulo ASC');
+  async listarTodos() {
+    const rows = await this.provider.all('SELECT * FROM retos ORDER BY fecha_inicio DESC, titulo ASC');
     return rows.map((r) => Reto.fromDatabase(r));
   }
 
   /**
    * Lista solo los retos activos.
-   * @returns {Reto[]}
+   * @returns {Promise<Reto[]>}
    */
-  listarActivos() {
-    const rows = this.provider.all(
+  async listarActivos() {
+    const rows = await this.provider.all(
       'SELECT * FROM retos WHERE activo = 1 ORDER BY fecha_inicio DESC, titulo ASC'
     );
     return rows.map((r) => Reto.fromDatabase(r));
@@ -50,24 +50,25 @@ export class RetoRepository {
   /**
    * Guarda o actualiza un reto.
    * @param {Reto} reto
-   * @returns {Reto}
+   * @returns {Promise<Reto>}
    */
-  guardar(reto) {
+  async guardar(reto) {
     const id = reto.id || randomUUID();
     const createdAt = reto.createdAt || new Date().toISOString();
     const activoInt = reto.activo ? 1 : 0;
 
-    this.provider.run(
+    const row = await this.provider.get(
       `INSERT INTO retos (id, titulo, descripcion, categoria, meta, fecha_inicio, fecha_fin, activo, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         titulo = excluded.titulo,
-         descripcion = excluded.descripcion,
-         categoria = excluded.categoria,
-         meta = excluded.meta,
-         fecha_inicio = excluded.fecha_inicio,
-         fecha_fin = excluded.fecha_fin,
-         activo = excluded.activo`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (id) DO UPDATE SET
+         titulo = EXCLUDED.titulo,
+         descripcion = EXCLUDED.descripcion,
+         categoria = EXCLUDED.categoria,
+         meta = EXCLUDED.meta,
+         fecha_inicio = EXCLUDED.fecha_inicio,
+         fecha_fin = EXCLUDED.fecha_fin,
+         activo = EXCLUDED.activo
+       RETURNING *`,
       [
         id,
         reto.titulo,
@@ -81,15 +82,15 @@ export class RetoRepository {
       ]
     );
 
-    return this.obtenerPorId(id);
+    return row ? Reto.fromDatabase(row) : await this.obtenerPorId(id);
   }
 
   /**
    * Cuenta total de retos registrados.
-   * @returns {number}
+   * @returns {Promise<number>}
    */
-  contar() {
-    const row = this.provider.get('SELECT COUNT(*) as total FROM retos');
-    return row ? row.total : 0;
+  async contar() {
+    const row = await this.provider.get('SELECT COUNT(*) as total FROM retos');
+    return row ? parseInt(row.total, 10) : 0;
   }
 }

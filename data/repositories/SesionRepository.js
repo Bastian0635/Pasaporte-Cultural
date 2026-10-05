@@ -1,15 +1,15 @@
 /**
  * data/repositories/SesionRepository.js
  * 
- * Persistencia y gestión de sesiones activas de usuarios.
+ * Persistencia y gestión de sesiones activas de usuarios con PostgreSQL.
  */
 
 import { Usuario } from '../models/Usuario.js';
-import { getDatabaseProvider } from '../providers/sqliteProvider.js';
+import { getDatabaseProvider } from '../providers/postgresProvider.js';
 
 export class SesionRepository {
   /**
-   * @param {import('../providers/sqliteProvider.js').SqliteProvider} [provider]
+   * @param {import('../providers/postgresProvider.js').PostgresProvider} [provider]
    */
   constructor(provider = null) {
     this.provider = provider || getDatabaseProvider();
@@ -21,13 +21,13 @@ export class SesionRepository {
    * @param {string} params.token
    * @param {string} params.usuarioId
    * @param {string} params.expiresAt
-   * @returns {object}
+   * @returns {Promise<object>}
    */
-  crear({ token, usuarioId, expiresAt }) {
+  async crear({ token, usuarioId, expiresAt }) {
     const createdAt = new Date().toISOString();
-    this.provider.run(
+    await this.provider.run(
       `INSERT INTO sesiones (token, usuario_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4)`,
       [token, String(usuarioId), createdAt, expiresAt]
     );
 
@@ -38,19 +38,19 @@ export class SesionRepository {
    * Busca una sesión válida por token, junto con el usuario asociado.
    * Si la sesión ha expirado, no se retorna.
    * @param {string} token
-   * @returns {{ token: string, usuario: Usuario, expiresAt: string }|null}
+   * @returns {Promise<{ token: string, usuario: Usuario, expiresAt: string }|null>}
    */
-  buscarPorToken(token) {
+  async buscarPorToken(token) {
     if (!token) return null;
     const ahoraIso = new Date().toISOString();
 
-    const row = this.provider.get(
+    const row = await this.provider.get(
       `SELECT s.token, s.expires_at, s.created_at,
               u.id as u_id, u.nombre as u_nombre, u.email as u_email,
               u.password as u_password, u.rol as u_rol, u.created_at as u_created_at
        FROM sesiones s
        JOIN usuarios u ON s.usuario_id = u.id
-       WHERE s.token = ? AND s.expires_at > ?`,
+       WHERE s.token = $1 AND s.expires_at > $2`,
       [token, ahoraIso]
     );
 
@@ -76,11 +76,11 @@ export class SesionRepository {
   /**
    * Elimina una sesión por token (Logout).
    * @param {string} token
-   * @returns {boolean}
+   * @returns {Promise<boolean>}
    */
-  eliminar(token) {
+  async eliminar(token) {
     if (!token) return false;
-    const res = this.provider.run('DELETE FROM sesiones WHERE token = ?', [token]);
+    const res = await this.provider.run('DELETE FROM sesiones WHERE token = $1', [token]);
     return res.changes > 0;
   }
 
@@ -88,15 +88,15 @@ export class SesionRepository {
    * Elimina todas las sesiones de un usuario.
    * @param {string} usuarioId
    */
-  eliminarPorUsuario(usuarioId) {
-    this.provider.run('DELETE FROM sesiones WHERE usuario_id = ?', [String(usuarioId)]);
+  async eliminarPorUsuario(usuarioId) {
+    await this.provider.run('DELETE FROM sesiones WHERE usuario_id = $1', [String(usuarioId)]);
   }
 
   /**
    * Elimina registros de sesiones vencidas.
    */
-  limpiarExpiradas() {
+  async limpiarExpiradas() {
     const ahoraIso = new Date().toISOString();
-    this.provider.run('DELETE FROM sesiones WHERE expires_at <= ?', [ahoraIso]);
+    await this.provider.run('DELETE FROM sesiones WHERE expires_at <= $1', [ahoraIso]);
   }
 }

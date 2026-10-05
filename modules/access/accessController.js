@@ -25,7 +25,7 @@ export class AccessController {
   login = async (req, res, next) => {
     try {
       const { email, password } = req.body || {};
-      const { token, usuario, expiresAt } = this.sesionService.iniciarSesion(email, password);
+      const { token, usuario, expiresAt } = await this.sesionService.iniciarSesion(email, password);
 
       // Guardar cookie HTTP segura para navegación web
       res.cookie(APP_CONFIG.SESSION_COOKIE_NAME, token, {
@@ -54,7 +54,7 @@ export class AccessController {
     try {
       const token = extraerToken(req);
       if (token) {
-        this.sesionService.cerrarSesion(token);
+        await this.sesionService.cerrarSesion(token);
       }
 
       res.clearCookie(APP_CONFIG.SESSION_COOKIE_NAME);
@@ -76,7 +76,7 @@ export class AccessController {
   obtenerUsuarioActual = async (req, res, next) => {
     try {
       const token = extraerToken(req);
-      const usuario = this.sesionService.usuarioActual(token);
+      const usuario = await this.sesionService.usuarioActual(token);
 
       if (!usuario) {
         return res.status(200).json({

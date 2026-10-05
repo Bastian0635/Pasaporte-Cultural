@@ -1,7 +1,7 @@
 /**
  * data/factories/seedFactory.js
  * 
- * Carga inicial de datos de demostración de manera reproducible e idempotente.
+ * Carga inicial de datos de demostración de manera reproducible e idempotente para PostgreSQL.
  * REGLA CLAVE: No sobrescribe favoritos, visitas ni modificaciones existentes
  * realizadas por usuarios o editores en reinicios posteriores.
  */
@@ -13,34 +13,39 @@ import { Reto } from '../models/Reto.js';
 import { UsuarioRepository } from '../repositories/UsuarioRepository.js';
 import { LugarRepository } from '../repositories/LugarRepository.js';
 import { RetoRepository } from '../repositories/RetoRepository.js';
+import { getDatabaseProvider } from '../providers/postgresProvider.js';
 
 export class SeedFactory {
   /**
    * @param {object} [opciones={}]
-   * @param {import('../providers/sqliteProvider.js').SqliteProvider} [opciones.provider]
+   * @param {import('../providers/postgresProvider.js').PostgresProvider} [opciones.provider]
    * @param {UsuarioRepository} [opciones.usuarioRepo]
    * @param {LugarRepository} [opciones.lugarRepo]
    * @param {RetoRepository} [opciones.retoRepo]
    */
   constructor({ provider = null, usuarioRepo = null, lugarRepo = null, retoRepo = null } = {}) {
-    this.usuarioRepo = usuarioRepo || new UsuarioRepository(provider);
-    this.lugarRepo = lugarRepo || new LugarRepository(provider);
-    this.retoRepo = retoRepo || new RetoRepository(provider);
+    const activeProvider = provider || getDatabaseProvider();
+    this.provider = activeProvider;
+    this.usuarioRepo = usuarioRepo || new UsuarioRepository(activeProvider);
+    this.lugarRepo = lugarRepo || new LugarRepository(activeProvider);
+    this.retoRepo = retoRepo || new RetoRepository(activeProvider);
   }
 
   /**
    * Ejecuta la inicialización de datos de demostración respetando datos existentes.
-   * @returns {{ usuariosCreados: number, lugaresCreados: number, retosCreados: number }}
+   * @returns {Promise<{ usuariosCreados: number, lugaresCreados: number, retosCreados: number }>}
    */
-  poblarSiEsNecesario() {
+  async poblarSiEsNecesario() {
     let usuariosCreados = 0;
     let lugaresCreados = 0;
     let retosCreados = 0;
 
-    // 1. Usuarios demo (solo si el correo no existe en la base de datos)
+    // 1. Usuarios demo (solo si ni el id ni el email existen previamente)
     for (const u of USUARIOS_DEMO) {
-      const existente = this.usuarioRepo.buscarPorEmail(u.email);
-      if (!existente) {
+      const existePorId = u.id ? await this.usuarioRepo.obtenerPorId(u.id) : null;
+      const existePorEmail = u.email ? await this.usuarioRepo.buscarPorEmail(u.email) : null;
+
+      if (!existePorId && !existePorEmail) {
         const nuevoUsuario = new Usuario({
           id: u.id,
           nombre: u.nombre,
@@ -48,15 +53,17 @@ export class SeedFactory {
           password: u.password,
           rol: u.rol
         });
-        this.usuarioRepo.guardar(nuevoUsuario);
+        await this.usuarioRepo.guardar(nuevoUsuario);
         usuariosCreados++;
       }
     }
 
-    // 2. Lugares demo (solo si el código de registro no existe en la base de datos)
+    // 2. Lugares demo (solo si ni el id ni el código de registro existen)
     for (const l of LUGARES_DEMO) {
-      const existente = this.lugarRepo.obtenerPorCodigo(l.codigoRegistro);
-      if (!existente) {
+      const existePorId = l.id ? await this.lugarRepo.obtenerPorId(l.id) : null;
+      const existePorCodigo = l.codigoRegistro ? await this.lugarRepo.obtenerPorCodigo(l.codigoRegistro) : null;
+
+      if (!existePorId && !existePorCodigo) {
         const nuevoLugar = new Lugar({
           id: l.id,
           nombre: l.nombre,
@@ -69,14 +76,14 @@ export class SeedFactory {
           codigoRegistro: l.codigoRegistro,
           activo: l.activo
         });
-        this.lugarRepo.guardar(nuevoLugar);
+        await this.lugarRepo.guardar(nuevoLugar);
         lugaresCreados++;
       }
     }
 
-    // 3. Retos demo (solo si el ID o título del reto no existe)
+    // 3. Retos demo (solo si el ID no existe)
     for (const r of RETOS_DEMO) {
-      const existente = this.retoRepo.obtenerPorId(r.id);
+      const existente = await this.retoRepo.obtenerPorId(r.id);
       if (!existente) {
         const nuevoReto = new Reto({
           id: r.id,
@@ -88,7 +95,7 @@ export class SeedFactory {
           fechaFin: r.fechaFin,
           activo: r.activo
         });
-        this.retoRepo.guardar(nuevoReto);
+        await this.retoRepo.guardar(nuevoReto);
         retosCreados++;
       }
     }
@@ -98,13 +105,20 @@ export class SeedFactory {
 }
 
 /**
- * Función de conveniencia para poblar la base de datos activa.
+ * Función de conveniencia para inicializar tablas y poblar la base de datos activa.
+ * Garantiza que al iniciar el servidor por primera vez, cree las tablas automáticamente si no existen
+ * y pueble los lugares, retos y usuarios de prueba.
+ * @param {import('../providers/postgresProvider.js').PostgresProvider} [provider=null]
+ * @returns {Promise<{ usuariosCreados: number, lugaresCreados: number, retosCreados: number }>}
  */
-export function poblarDatosIniciales(provider = null) {
-  const usuarioRepo = new UsuarioRepository(provider);
-  const lugarRepo = new LugarRepository(provider);
-  const retoRepo = new RetoRepository(provider);
+export async function poblarDatosIniciales(provider = null) {
+  const activeProvider = provider || getDatabaseProvider();
 
-  const factory = new SeedFactory({ usuarioRepo, lugarRepo, retoRepo });
-  return factory.poblarSiEsNecesario();
+  // Asegurar que las tablas existan antes de sembrar los datos
+  if (typeof activeProvider.inicializarTablas === 'function') {
+    await activeProvider.inicializarTablas();
+  }
+
+  const factory = new SeedFactory({ provider: activeProvider });
+  return await factory.poblarSiEsNecesario();
 }
